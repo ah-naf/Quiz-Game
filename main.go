@@ -48,8 +48,7 @@ func readAnswers(answerChan chan string) {
 }
 
 // askQuestion presents a question, waits for an answer or timeout, and returns the score.
-func askQuestion(question, ans string, limit int, answerChan chan string) int {
-	fmt.Printf("Question: %s ", question)
+func askQuestion(ans string, limit int, answerChan chan string) int {
 	timer := time.NewTimer(time.Duration(limit) * time.Second)
 	defer timer.Stop()
 
@@ -85,7 +84,21 @@ func askQuestion(question, ans string, limit int, answerChan chan string) int {
 
 // singleAnswerQuestion is a wrapper for askQuestion.
 func singleAnswerQuestion(question, answer string, limit int, answerChan chan string) int {
-	return askQuestion(question, answer, limit, answerChan)
+	fmt.Printf("Question: %s ", question)
+	return askQuestion(answer, limit, answerChan)
+}
+
+func multipleAnswerQuestion(line []string, limit int, answerChan chan string) int {
+	question, optionA, optionB, optionC, optionD, correctOption := strings.TrimSpace(line[0]), strings.TrimSpace(line[1]), strings.TrimSpace(line[2]), strings.TrimSpace(line[3]), strings.TrimSpace(line[4]), strings.TrimSpace(line[5])
+
+	fmt.Printf("Question: %s\n", question)
+	fmt.Printf("A) %s\n", optionA)
+	fmt.Printf("B) %s\n", optionB)
+	fmt.Printf("C) %s\n", optionC)
+	fmt.Printf("D) %s\n", optionD)
+	fmt.Print("Your answer (A/B/C/D): ")
+
+	return askQuestion(correctOption, limit, answerChan)
 }
 
 // runQuiz processes each question and accumulates the score.
@@ -95,6 +108,8 @@ func runQuiz(questionChan chan []string, limit int, answerChan chan string) int 
 	for line := range questionChan {
 		if len(line) == 2 {
 			score += singleAnswerQuestion(line[0], line[1], limit, answerChan)
+		} else if len(line) == 6 {
+			score += multipleAnswerQuestion(line, limit, answerChan)
 		} else {
 			fmt.Println("Invalid question format:", line)
 		}
