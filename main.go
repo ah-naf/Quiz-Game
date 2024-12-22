@@ -10,69 +10,114 @@ import (
 	"time"
 )
 
-func main() {
-	csvPath := flag.String("csv", "problems.csv", "A csv file in the format of 'question, answer' (default 'problems.csv')")
-	limit := flag.Int("limit", 10, "The time limit for the quiz in seconds (default 30)")
-	flag.Parse()
-
-	file, err := os.Open(*csvPath)
+// loadQuestions reads questions from a CSV file and sends them to questionChan.
+func loadQuestions(csvPath string, questionChan chan []string) {
+	file, err := os.Open(csvPath)
 	if err != nil {
-		fmt.Println(err)
+		fmt.Println("Error loading questions:", err)
+		close(questionChan)
 		return
 	}
 	defer file.Close()
 
 	scanner := bufio.NewScanner(file)
-	count, score := 0, 0
 	for scanner.Scan() {
-		count++
 		line := strings.Split(scanner.Text(), ",")
-		question, ans := strings.TrimSpace(line[0]), strings.TrimSpace(line[1])
+		questionChan <- line
+	}
 
-		fmt.Fprintf(os.Stdout, "Question %d: %s ", count, question)
-		timer := time.NewTimer(time.Duration(*limit) * time.Second)
+	if err := scanner.Err(); err != nil {
+		fmt.Println("Error reading CSV:", err)
+	}
 
-		inputChan := make(chan string)
+	close(questionChan)
+}
 
-		go func() {
-			// Read user's answer
-			ansScanner := bufio.NewScanner(os.Stdin)
-			if !ansScanner.Scan() {
-				fmt.Println("\nError reading input.")
-				os.Exit(1)
+// readAnswers continuously reads from stdin and sends inputs to answerChan.
+func readAnswers(answerChan chan string) {
+	scanner := bufio.NewScanner(os.Stdin)
+	for scanner.Scan() {
+		answer := strings.TrimSpace(scanner.Text())
+		answerChan <- answer
+	}
+	if err := scanner.Err(); err != nil {
+		fmt.Println("\nError reading input:", err)
+		close(answerChan)
+		os.Exit(1)
+	}
+}
+
+// askQuestion presents a question, waits for an answer or timeout, and returns the score.
+func askQuestion(question, ans string, limit int, answerChan chan string) int {
+	fmt.Printf("Question: %s ", question)
+	timer := time.NewTimer(time.Duration(limit) * time.Second)
+	defer timer.Stop()
+
+	select {
+	case <-timer.C:
+		fmt.Println("\nTime's Up!")
+		return 0
+	case userAns := <-answerChan:
+		if !timer.Stop() {
+			<-timer.C
+		}
+		// Compare answers
+		ansFloat, errAns := strconv.ParseFloat(ans, 64)
+		userAnsFloat, errUserAns := strconv.ParseFloat(userAns, 64)
+
+		if errAns == nil && errUserAns == nil {
+			if ansFloat == userAnsFloat {
+				fmt.Println("Correct!")
+				return 1
 			}
-			userAns := strings.TrimSpace(ansScanner.Text())
-			inputChan <- userAns
-		}()
-
-		select {
-		case <-timer.C:
-			fmt.Printf("\n\nTime's Up!\nYour Score is %d\n", score)
-			os.Exit(0)
-		case userAns := <-inputChan:
-			// Try to parse both the user's answer and the actual answer as floats
-			ansFloat, errAns := strconv.ParseFloat(ans, 64)
-			userAnsFloat, errUserAns := strconv.ParseFloat(userAns, 64)
-
-			if errAns == nil && errUserAns == nil {
-				// Both are floats, compare numerically
-				if ansFloat == userAnsFloat {
-					score++
-				} else {
-					fmt.Printf("\n\nIncorrect. Game Over. Your Score is %d\n", score)
-					os.Exit(0)
-				}
-			} else {
-				// Compare as strings if parsing fails
-				if userAns == ans {
-					score++
-				} else {
-					fmt.Printf("\n\nIncorrect. Game Over. Your Score is %d\n", score)
-					os.Exit(0)
-				}
-			}
+			fmt.Println("Incorrect!")
+			return 0
 		}
 
+		if strings.EqualFold(userAns, ans) {
+			fmt.Println("Correct!")
+			return 1
+		}
+		fmt.Println("Incorrect!")
+		return 0
 	}
-	fmt.Printf("\n\nQuiz Completed! Your Final Score is %d\n", score)
+}
+
+// singleAnswerQuestion is a wrapper for askQuestion.
+func singleAnswerQuestion(question, answer string, limit int, answerChan chan string) int {
+	return askQuestion(question, answer, limit, answerChan)
+}
+
+// runQuiz processes each question and accumulates the score.
+func runQuiz(questionChan chan []string, limit int, answerChan chan string) int {
+	score := 0
+
+	for line := range questionChan {
+		if len(line) == 2 {
+			score += singleAnswerQuestion(line[0], line[1], limit, answerChan)
+		} else {
+			fmt.Println("Invalid question format:", line)
+		}
+	}
+
+	return score
+}
+
+func main() {
+	// Define command-line flags
+	csvPath := flag.String("csv", "problems.csv", "A csv file in the format of 'question, answer' (default 'problems.csv')")
+	limit := flag.Int("limit", 10, "The time limit for each question in seconds (default 10)")
+	flag.Parse()
+
+	// Initialize channels
+	questionChan := make(chan []string)
+	answerChan := make(chan string, 1)
+
+	// Start loading questions and reading answers concurrently
+	go loadQuestions(*csvPath, questionChan)
+	go readAnswers(answerChan)
+
+	// Run the quiz
+	score := runQuiz(questionChan, *limit, answerChan)
+	fmt.Printf("\nQuiz Completed! Your Final Score is %d\n", score)
 }
